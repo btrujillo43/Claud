@@ -1,0 +1,304 @@
+/*
+ * Analog Way RC400T (AWJ) - SIMPL+ wrapper
+ * ------------------------------------------------------------------------
+ * Brings the AnalogWay.Rc400t.AwjDevice SIMPL# library into SIMPL Windows.
+ * One instance of this module = one connection to one AWJ-capable processor
+ * (Aquilon C / Alta 4K on LivePremier 4.x, or a Midra 4K unit: Eikos, Pulse,
+ * QuickMatrix, QuickVu, Zenith 100/200) - the same processor an RC400T event
+ * controller would otherwise drive.
+ *
+ * All screen/aux/layer/bus/memory-scoped commands use a "load the
+ * parameters, then pulse the matching Execute_* input" pattern rather than
+ * arrayed per-screen joins: set the Param_* signals for the object you want
+ * to address, then pulse the one Execute_* input for the action. This keeps
+ * the join list fixed regardless of how many screens or memories the
+ * processor has (Midra alone supports up to 200 screen memories and 8
+ * layers per screen - too many to reasonably array as individual joins).
+ *
+ * Setup in SIMPL+:
+ *   1. Build src/AnalogWay.Rc400t/AnalogWay.Rc400t.csproj against the
+ *      Crestron.SimplSharp.SDK.Library package to produce AnalogWay.Rc400t.dll.
+ *   2. In the SIMPL+ program, add that DLL via
+ *      Project -> Set Compiler Options ... -> "Reference Assemblies" (or, in
+ *      older SIMPL+ IDEs, the User Library / DLL manager) so the assembly
+ *      name "AnalogWay.Rc400t" below resolves.
+ *   3. Compile this .usp, insert it in SIMPL Windows, wire the joins per the
+ *      table in README.md.
+ * ------------------------------------------------------------------------
+ */
+
+#SYMBOL_NAME "Analog Way RC400T (AWJ) Processor"
+#HINT "Controls an AWJ (Analog Way JSON) capable processor - Aquilon C / Alta 4K or Midra 4K - as an RC400T event controller would"
+#CATEGORY "37" // Video Devices - cosmetic only (which SIMPL Windows catalog folder this appears under); adjust freely
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+
+#USER_SIMPLSHARP_LIBRARY "AnalogWay.Rc400t"
+
+/*------------------------------------------------------------------------
+  Connection
+------------------------------------------------------------------------*/
+DIGITAL_INPUT Execute_Connect, Execute_Disconnect;
+DIGITAL_INPUT Set_Platform_LivePremier4, Set_Platform_Midra; // pulse one before Execute_Connect
+ANALOG_INPUT Port; // 0 = default (80)
+STRING_INPUT IPAddress[64], Password[64];
+
+DIGITAL_OUTPUT Online_FB;
+STRING_OUTPUT Error_FB[255];
+STRING_OUTPUT DeviceModel_FB[64], FirmwareVersion_FB[64], SerialNumber_FB[64];
+
+/*------------------------------------------------------------------------
+  Shared command parameters - set these, then pulse the Execute_* that uses them
+------------------------------------------------------------------------*/
+ANALOG_INPUT Param_ScreenId;
+DIGITAL_INPUT Param_IsAux;      // 0 = screen, 1 = aux-screen
+DIGITAL_INPUT Param_Bus;        // 0 = A, 1 = B
+STRING_INPUT Param_LayerId[16]; // "1".."8", or Midra's "NATIVE"/"TOP"
+ANALOG_INPUT Param_SourceId;
+ANALOG_INPUT Param_MemoryId;
+ANALOG_INPUT Param_Width, Param_Height;
+ANALOG_INPUT Param_PosX, Param_PosY; // raw 16-bit join value, reinterpreted as signed before sending
+ANALOG_INPUT Param_TBarPosition;     // 0-65535 across full travel
+ANALOG_INPUT Param_TransitionTime;   // raw device units - see README
+ANALOG_INPUT Param_InputId;
+STRING_INPUT Param_RawPath[255], Param_RawValue[255]; // for Execute_SendRawPath
+STRING_INPUT Param_QueryPath[255];                    // for Execute_QueryState
+STRING_INPUT MacAddress[32];                          // for Execute_WakeOnLan
+
+/*------------------------------------------------------------------------
+  Transition control
+------------------------------------------------------------------------*/
+DIGITAL_INPUT Execute_Take;            // Take(Param_ScreenId, Param_IsAux)
+DIGITAL_INPUT Execute_TakeToBus;       // TakeToBus(Param_ScreenId, Param_IsAux, Param_Bus) - LivePremier4
+DIGITAL_INPUT Execute_Cut;             // Cut(Param_ScreenId, Param_IsAux)
+DIGITAL_INPUT Execute_SetTBarPosition; // SetTBarPosition(Param_ScreenId, Param_IsAux, Param_TBarPosition)
+DIGITAL_INPUT Execute_SetTransitionTime;
+
+/*------------------------------------------------------------------------
+  Sources and layers
+------------------------------------------------------------------------*/
+DIGITAL_INPUT Execute_SetLayerSource;   // SetLayerSource(ScreenId, IsAux, Bus, LayerId, SourceId)
+DIGITAL_INPUT Execute_SetLayerPosition; // SetLayerPosition(ScreenId, IsAux, LayerId, PosX, PosY)
+DIGITAL_INPUT Execute_SetLayerSize;     // SetLayerSize(ScreenId, IsAux, LayerId, Width, Height)
+
+/*------------------------------------------------------------------------
+  Memories
+------------------------------------------------------------------------*/
+DIGITAL_INPUT Execute_RecallScreenMemory; // RecallScreenMemory(ScreenId, IsAux, Bus, MemoryId)
+DIGITAL_INPUT Execute_RecallMasterMemory; // RecallMasterMemory(Bus, MemoryId)
+
+/*------------------------------------------------------------------------
+  Inputs, streaming and power
+------------------------------------------------------------------------*/
+DIGITAL_INPUT Execute_FreezeOn, Execute_FreezeOff; // act on Param_InputId
+DIGITAL_INPUT Execute_StartStreaming, Execute_StopStreaming; // Midra only
+DIGITAL_INPUT Execute_PowerOff, Execute_Reboot, Execute_Standby;
+DIGITAL_INPUT Execute_WakeOnLan;
+
+/*------------------------------------------------------------------------
+  Escape hatch and generic state feedback
+------------------------------------------------------------------------*/
+DIGITAL_INPUT Execute_SendRawPath;
+DIGITAL_INPUT Execute_QueryState;
+STRING_OUTPUT QueryResult_FB[255];
+
+DIGITAL_OUTPUT StateChanged_Event; // pulses whenever the two outputs below are updated
+STRING_OUTPUT StateChanged_Path_FB[255], StateChanged_Value_FB[255];
+
+/*------------------------------------------------------------------------
+  SIMPL# object and callbacks
+------------------------------------------------------------------------*/
+AnalogWay.Rc400t.AwjDevice Processor;
+INTEGER SelectedPlatform; // 0 = LivePremier4, 1 = Midra - mirrors AwjDevice.SetPlatform's argument
+
+CALLBACK FUNCTION HandleOnline(INTEGER online)
+{
+	Online_FB = online;
+}
+
+CALLBACK FUNCTION HandleError(STRING message)
+{
+	Error_FB = message;
+}
+
+CALLBACK FUNCTION HandleModel(STRING model)
+{
+	DeviceModel_FB = model;
+}
+
+CALLBACK FUNCTION HandleFirmware(STRING firmware)
+{
+	FirmwareVersion_FB = firmware;
+}
+
+CALLBACK FUNCTION HandleSerial(STRING serialNumber)
+{
+	SerialNumber_FB = serialNumber;
+}
+
+CALLBACK FUNCTION HandleStateChanged(STRING changedPath, STRING changedValue)
+{
+	StateChanged_Path_FB = changedPath;
+	StateChanged_Value_FB = changedValue;
+	PULSE(StateChanged_Event);
+}
+
+FUNCTION Main()
+{
+	WaitForInitializationComplete();
+
+	Processor = new AnalogWay.Rc400t.AwjDevice();
+	Processor.OnlineFeedback = HandleOnline;
+	Processor.ErrorFeedback = HandleError;
+	Processor.DeviceModelFeedback = HandleModel;
+	Processor.FirmwareVersionFeedback = HandleFirmware;
+	Processor.SerialNumberFeedback = HandleSerial;
+	Processor.StateChangedFeedback = HandleStateChanged;
+
+	SelectedPlatform = 1; // default Midra until Set_Platform_LivePremier4 is pulsed
+	Processor.SetPlatform(SelectedPlatform);
+}
+
+/*------------------------------------------------------------------------
+  Connection
+------------------------------------------------------------------------*/
+PUSH Set_Platform_LivePremier4
+{
+	SelectedPlatform = 0;
+	Processor.SetPlatform(SelectedPlatform);
+}
+
+PUSH Set_Platform_Midra
+{
+	SelectedPlatform = 1;
+	Processor.SetPlatform(SelectedPlatform);
+}
+
+PUSH Execute_Connect
+{
+	Processor.Initialize(IPAddress, Port, Password);
+	Processor.Connect();
+}
+
+PUSH Execute_Disconnect
+{
+	Processor.Disconnect();
+}
+
+/*------------------------------------------------------------------------
+  Transition control
+------------------------------------------------------------------------*/
+PUSH Execute_Take
+{
+	Processor.Take(Param_ScreenId, Param_IsAux);
+}
+
+PUSH Execute_TakeToBus
+{
+	Processor.TakeToBus(Param_ScreenId, Param_IsAux, Param_Bus);
+}
+
+PUSH Execute_Cut
+{
+	Processor.Cut(Param_ScreenId, Param_IsAux);
+}
+
+PUSH Execute_SetTBarPosition
+{
+	Processor.SetTBarPosition(Param_ScreenId, Param_IsAux, Param_TBarPosition);
+}
+
+PUSH Execute_SetTransitionTime
+{
+	Processor.SetTransitionTime(Param_ScreenId, Param_IsAux, Param_TransitionTime);
+}
+
+/*------------------------------------------------------------------------
+  Sources and layers
+------------------------------------------------------------------------*/
+PUSH Execute_SetLayerSource
+{
+	Processor.SetLayerSource(Param_ScreenId, Param_IsAux, Param_Bus, Param_LayerId, Param_SourceId);
+}
+
+PUSH Execute_SetLayerPosition
+{
+	SIGNED_INTEGER sx, sy;
+	sx = (SIGNED_INTEGER)Param_PosX;
+	sy = (SIGNED_INTEGER)Param_PosY;
+	Processor.SetLayerPosition(Param_ScreenId, Param_IsAux, Param_LayerId, sx, sy);
+}
+
+PUSH Execute_SetLayerSize
+{
+	Processor.SetLayerSize(Param_ScreenId, Param_IsAux, Param_LayerId, Param_Width, Param_Height);
+}
+
+/*------------------------------------------------------------------------
+  Memories
+------------------------------------------------------------------------*/
+PUSH Execute_RecallScreenMemory
+{
+	Processor.RecallScreenMemory(Param_ScreenId, Param_IsAux, Param_Bus, Param_MemoryId);
+}
+
+PUSH Execute_RecallMasterMemory
+{
+	Processor.RecallMasterMemory(Param_Bus, Param_MemoryId);
+}
+
+/*------------------------------------------------------------------------
+  Inputs, streaming and power
+------------------------------------------------------------------------*/
+PUSH Execute_FreezeOn
+{
+	Processor.FreezeInput(Param_InputId, 1);
+}
+
+PUSH Execute_FreezeOff
+{
+	Processor.FreezeInput(Param_InputId, 0);
+}
+
+PUSH Execute_StartStreaming
+{
+	Processor.SetStreaming(1);
+}
+
+PUSH Execute_StopStreaming
+{
+	Processor.SetStreaming(0);
+}
+
+PUSH Execute_PowerOff
+{
+	Processor.PowerOff();
+}
+
+PUSH Execute_Reboot
+{
+	Processor.Reboot();
+}
+
+PUSH Execute_Standby
+{
+	Processor.Standby();
+}
+
+PUSH Execute_WakeOnLan
+{
+	Processor.WakeOnLan(MacAddress);
+}
+
+/*------------------------------------------------------------------------
+  Escape hatch
+------------------------------------------------------------------------*/
+PUSH Execute_SendRawPath
+{
+	Processor.SendRawPath(Param_RawPath, Param_RawValue);
+}
+
+PUSH Execute_QueryState
+{
+	QueryResult_FB = Processor.GetStateValue(Param_QueryPath);
+}

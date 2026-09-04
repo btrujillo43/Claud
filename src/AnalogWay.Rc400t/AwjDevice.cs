@@ -330,13 +330,16 @@ namespace AnalogWay.Rc400t
             }
         }
 
-        /// <summary>Reads back the last known value at a path (as received from the device), or null if unknown.</summary>
+        /// <summary>
+        /// Reads back the last known value at a path (as received from the device), or "" if unknown.
+        /// Returns "" rather than null so this is safe to assign directly to a SIMPL+ STRING signal.
+        /// </summary>
         public string GetStateValue(string path)
         {
             lock (_stateLock)
             {
                 string value;
-                return _state.TryGetValue(path, out value) ? value : null;
+                return _state.TryGetValue(path, out value) ? value : string.Empty;
             }
         }
 

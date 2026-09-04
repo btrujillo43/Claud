@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- Crestron 4-series / Virtual Control SIMPL# Pro processors run on .NET Framework 4.7.2. -->
+    <!-- The SIMPL+ cross-compiler links against plain SIMPL# (not "Pro") assemblies. -->
     <TargetFramework>net472</TargetFramework>
     <LangVersion>7.3</LangVersion>
     <RootNamespace>AnalogWay.Rc400t</RootNamespace>
@@ -9,23 +9,24 @@
     <Nullable>disable</Nullable>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <!--
-      SIMPL# Pro libraries are plain class libraries that reference Crestron's own SDK assemblies.
-      Once compiled, the resulting DLL is inserted into a SIMPL Windows program as a "SIMPL# Module" -
-      SIMPL Windows reads this class's public methods/properties and offers them as digital, analog
-      and serial signals automatically; no separate join map file is needed.
+      This class library uses only sockets, threading, HTTP, crypto and JSON - none of the hardware
+      I/O surface in SimplSharpPro.dll - so it builds as a plain "SIMPL#" library, the kind meant to
+      be linked into a SIMPL+ module (see simplplus/AnalogWayRc400t.usp) with
+      "#USER_SIMPLSHARP_LIBRARY". That's what makes this usable from SIMPL Windows on both 3-series
+      and 4-series processors, not just from a SIMPL# Pro program.
     -->
   </PropertyGroup>
 
   <ItemGroup>
     <!--
-      Crestron publishes the SIMPL# SDK for 4-series/Virtual Control C# libraries as the
-      Crestron.SimplSharp.SDK.ProgramLibrary NuGet package (SimplSharp.dll, SimplSharpPro.dll, and
-      the bundled Crestron.SimplSharp.Newtonsoft.Json / Crestron.SimplSharp.Cryptography assemblies
-      this project uses). If your Crestron Toolbox/VS integration predates that package, replace this
-      PackageReference with direct <Reference Include="..." HintPath="..."/> entries pointing at the
-      DLLs under your local "Crestron SIMPL# SDK" install directory instead.
+      Crestron publishes the plain SIMPL# SDK (SimplSharp.dll and the bundled
+      Crestron.SimplSharp.Newtonsoft.Json / Crestron.SimplSharp.Cryptography assemblies this project
+      uses - no SimplSharpPro.dll) as the Crestron.SimplSharp.SDK.Library NuGet package. If your
+      Crestron Toolbox/VS integration predates that package, replace this PackageReference with a
+      direct <Reference Include="SimplSharp" HintPath="..."/> pointing at SimplSharp.dll under your
+      local "Crestron SIMPL# SDK" install directory instead.
     -->
-    <PackageReference Include="Crestron.SimplSharp.SDK.ProgramLibrary" Version="2.*" />
+    <PackageReference Include="Crestron.SimplSharp.SDK.Library" Version="2.*" />
   </ItemGroup>
 
 </Project>
