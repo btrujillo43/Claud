@@ -1,6 +1,6 @@
 using System;
-using Crestron.SimplSharp.Newtonsoft.Json;
-using Crestron.SimplSharp.Newtonsoft.Json.Linq;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace AnalogWay.Rc400t
 {

@@ -1,6 +1,6 @@
 using System;
 using Crestron.SimplSharp.Net.Http;
-using Crestron.SimplSharp.Newtonsoft.Json.Linq;
+using Newtonsoft.Json.Linq;
 
 namespace AnalogWay.Rc400t
 {
@@ -56,7 +56,7 @@ namespace AnalogWay.Rc400t
         {
             using (var client = new HttpClient())
             {
-                var body = new JObject { ["password"] = password ?? string.Empty }.ToString(Crestron.SimplSharp.Newtonsoft.Json.Formatting.None);
+                var body = new JObject { ["password"] = password ?? string.Empty }.ToString(Newtonsoft.Json.Formatting.None);
                 var request = new HttpClientRequest
                 {
                     Url = new UrlParser(BaseUrl + "/auth/login"),

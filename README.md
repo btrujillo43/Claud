@@ -3,9 +3,9 @@
 A Crestron control module for the video processors an **Analog Way RC400T** event controller
 drives: **Aquilon C / Alta 4K** (LivePremier firmware 4.x) and the **Midra 4K** family (Eikos,
 Pulse, QuickMatrix, QuickVu, Zenith 100/200). The core logic is a SIMPL# class library
-(`src/AnalogWay.Rc400t/`); a SIMPL+ wrapper (`simplplus/AnalogWayRc400t.usp`) brings it into
-SIMPL Windows as an insertable symbol, and the same class can be used directly from a SIMPL# Pro
-program if you're not using SIMPL Windows at all.
+(`src/AnalogWay.Rc400t/`), built via `AnalogWay.Rc400t.sln`; a SIMPL+ wrapper
+(`simplplus/AnalogWayRc400t.usp`) brings it into SIMPL Windows as an insertable symbol, and the
+same class can be used directly from a SIMPL# Pro program if you're not using SIMPL Windows at all.
 
 ## Where the RC400T actually fits in
 
@@ -21,8 +21,9 @@ software-defined stand-in for the panel.
 
 | File | Purpose |
 |---|---|
+| `AnalogWay.Rc400t.sln` | Visual Studio solution — open this to build. |
 | `src/AnalogWay.Rc400t/AwjDevice.cs` | The module itself. Public methods are the "inputs", public delegate properties are the "outputs" — call/subscribe to them directly from a SIMPL# Pro program, or through the SIMPL+ wrapper below. |
-| `src/AnalogWay.Rc400t/AwjWebSocketClient.cs` | Hand-rolled RFC 6455 websocket client (Crestron's SDK has no built-in one) — AWJ's live control channel only exists over `ws://`/`wss://`. |
+| `src/AnalogWay.Rc400t/AwjWebSocketClient.cs` | Thin wrapper around Crestron's own `Crestron.SimplSharp.CrestronWebSocketClient.WebSocketClient` — AWJ's live control channel only exists over `ws://`/`wss://`. |
 | `src/AnalogWay.Rc400t/AwjRestClient.cs` | The short REST leg of the handshake: `/auth/status`, `/auth/login`, `/api/stores/device`. |
 | `src/AnalogWay.Rc400t/AwjMessage.cs` | Builds/parses the `{"channel":"DEVICE","data":{"path":[...],"value":...}}` envelope AWJ wraps every message in. |
 | `src/AnalogWay.Rc400t/AwjPathSet.cs`, `MidraPathSet.cs`, `LivePremier4PathSet.cs` | Per-platform AWJ path tables (screens/layers/memories/etc. are addressed differently on the two firmware families). |
@@ -46,6 +47,35 @@ Analog Way's own AWJ Programmer's Guide PDF (linked from analogway.com) is the a
 source and was not reachable from this environment's network sandbox; before relying on this
 module for a live show, spot-check the path tables below against that guide or against traffic
 captured from an actual RC400T/WebRCS session.
+
+### Verified against the real SDK
+
+The C#/Crestron side of this module isn't guesswork either: `Crestron.SimplSharp.SDK.Library`
+2.21.252 (the exact NuGet package `AnalogWay.Rc400t.csproj` references) was downloaded directly
+from nuget.org and disassembled with `monodis` to confirm every Crestron class, method and enum
+this project calls actually exists with the signature used — `CrestronSockets.TCPClient`/
+`UDPServer`, `CrestronWebSocketClient.WebSocketClient`, `Net.Http.HttpClient`/`HttpClientRequest`/
+`HttpClientResponse`/`UrlParser`/`HttpHeaders`, `Cryptography.SHA1CryptoServiceProvider`, and
+`ErrorLog`. That check caught and fixed three real bugs from the first pass: the JSON classes ship
+under the plain `Newtonsoft.Json`/`Newtonsoft.Json.Linq` namespaces (not
+`Crestron.SimplSharp.Newtonsoft.Json` as first written), `Crestron.SimplSharp.CrestronThread.Thread`
+doesn't exist in this package at all (replaced with plain `System.Threading.Thread`), and
+`TCPClient` has no `ReceiveData(byte[], int)` overload — which stopped mattering once
+`AwjWebSocketClient` was rewritten to wrap Crestron's own native `WebSocketClient` class instead of
+a hand-rolled RFC 6455 implementation, dropping the custom framing/handshake code entirely.
+
+Every file was then compiled with the Mono C# compiler (`mcs`) directly against those real
+downloaded assemblies. `AwjPlatform.cs`, `AwjPathSet.cs`, `MidraPathSet.cs`,
+`LivePremier4PathSet.cs`, `CrestronWakeOnLan.cs` and `AwjWebSocketClient.cs` compile with zero
+errors this way. `AwjMessage.cs`, `AwjRestClient.cs` and `AwjDevice.cs` hit one remaining error in
+this sandbox: `Newtonsoft.Json.Linq.JObject`/`JToken` need a `System, Version=3.5.0.0,
+Retargetable=Yes` facade that this Linux mono install doesn't carry (confirmed via a minimal
+repro — the same code compiles clean once that one type is out of the picture, and the interfaces
+it's missing demonstrably exist in mono's own `System.dll`, just under a different assembly
+identity). That's a mono/Linux-only facade-resolution gap, not a code defect — real Visual Studio
+on Windows with the full .NET Framework 4.7.2 resolves retargetable facades automatically. Still,
+since this wasn't compiled end-to-end with the actual Crestron/Visual Studio toolchain, treat the
+first real build as the final check.
 
 ### Handshake
 
@@ -84,34 +114,34 @@ Programmer's Guide or from a packet capture.
 
 ## Building
 
-`AwjDevice` and its helper classes use only sockets, threading, HTTP, crypto and JSON — none of
+`AwjDevice` and its helper classes use only sockets, HTTP, crypto and JSON — none of
 `SimplSharpPro.dll`'s hardware I/O surface — so the project builds as a plain **SIMPL#** library
 (not "SIMPL# Pro"). That's deliberate: plain SIMPL# libraries are the kind the SIMPL+
 cross-compiler can link against, which is what makes the SIMPL+ wrapper below possible, and it
-also runs fine standalone from a SIMPL# Pro program on 3-series, 4-series or Virtual Control.
+also runs fine standalone from a SIMPL# Pro program.
 
 This needs Crestron's SDK to compile and cannot be built in a general-purpose .NET environment:
 
-1. Open `src/AnalogWay.Rc400t/AnalogWay.Rc400t.csproj` in Visual Studio with the Crestron SIMPL#
-   tooling installed (or just restore NuGet packages — it references Crestron's official
-   `Crestron.SimplSharp.SDK.Library` package). If your toolchain predates that package, replace the
-   `PackageReference` with a `<Reference Include="SimplSharp" HintPath="..."/>` pointing at
-   `SimplSharp.dll` (plus `Crestron.SimplSharp.Newtonsoft.Json.dll` and
-   `Crestron.SimplSharp.Cryptography.dll`) from your local Crestron SDK install.
+1. Open `AnalogWay.Rc400t.sln` in Visual Studio with the Crestron SIMPL# tooling installed and
+   restore NuGet packages (it references Crestron's official `Crestron.SimplSharp.SDK.Library`
+   package, which transitively pulls in every assembly it ships — see the comment block in
+   `AnalogWay.Rc400t.csproj` for the full list). If your toolchain predates that package, replace
+   the `PackageReference` with direct `<Reference Include="..." HintPath="..."/>` entries for those
+   same DLLs from your local Crestron SIMPL# SDK install directory.
 2. Build. This produces `AnalogWay.Rc400t.dll` — the assembly name the `.usp` wrapper references
    via `#USER_SIMPLSHARP_LIBRARY "AnalogWay.Rc400t"`.
-3. Targets `net472` and uses only Crestron's documented socket/HTTP/crypto/JSON namespaces — no
-   3rd-party NuGet packages beyond Crestron's own SDK.
+3. Targets `net472` (`Crestron.SimplSharp.SDK.Library` also ships a `net6.0` build for VC-4/newer
+   4-series firmware — retarget if you need that instead) and uses only Crestron's own
+   socket/HTTP/crypto/JSON/websocket namespaces, all confirmed against the real package (see
+   "Verified against the real SDK" above) — no 3rd-party NuGet packages beyond Crestron's own SDK.
 
-> **Note on API surface:** the exact method names on Crestron's `CrestronSockets.TCPClient`,
-> `CrestronSockets.UDPServer`, `Net.Http.HttpClient` and `Cryptography.SHA1CryptoServiceProvider`
-> classes have shifted slightly across SDK releases. This was written against the long-standing,
-> widely-documented shape of those APIs but wasn't compiled against the actual SDK in this
-> environment (network access to Crestron's developer portal was not available here) — do a first
-> build against your installed SDK version and adjust any renamed members before deploying.
-> The same caveat applies to the SIMPL+ syntax in `AnalogWayRc400t.usp` — it follows the
-> long-documented `#USER_SIMPLSHARP_LIBRARY` / `CALLBACK FUNCTION` interop pattern, but hasn't been
-> run through the actual SIMPL+ cross-compiler; treat the first compile as the real check.
+> **Residual caveat:** this was compiled with `mcs` against the real, downloaded Crestron
+> assemblies (see above) and only one sandbox-specific, non-code issue turned up — a missing mono
+> facade for `Newtonsoft.Json`'s `JObject`/`JToken` types that real Visual Studio/.NET Framework
+> resolves automatically. The SIMPL+ syntax in `AnalogWayRc400t.usp` follows the long-documented
+> `#USER_SIMPLSHARP_LIBRARY` / `CALLBACK FUNCTION` interop pattern but hasn't been run through the
+> actual SIMPL+ cross-compiler (not available outside Windows) — treat the first SIMPL+ compile as
+> the remaining real check.
 
 ## Using it from SIMPL Windows (SIMPL+ wrapper)
 
@@ -182,13 +212,15 @@ processor.RecallScreenMemory(screenId: 1, isAux: 0, bus: 0, memoryId: 5);
 
 ## Known limitations
 
-- No TLS (`wss://`) support — AWJ processors are normally reached over an isolated AV control
-  network without TLS, matching WebRCS's own `http://` default; add a `SecureTCPClient`-based path
-  if your deployment terminates TLS on the processor itself.
+- `wss://` (TLS) is wired for but untested — `AwjWebSocketClient` sets `SSL = false` on Crestron's
+  `WebSocketClient` unconditionally; flip that (and thread a "use TLS" flag down from `AwjDevice`)
+  if your deployment terminates TLS on the processor. The REST leg of the handshake would also need
+  to move to `Crestron.SimplSharp.Net.Https.HttpsClient`.
+- The AWJ session cookie is sent to the websocket via `WebSocketClient.AddOnHeader` (one extra raw
+  header line on the upgrade request) — this wasn't independently confirmed against Crestron's own
+  docs; if a password-protected device doesn't authenticate the websocket, check that header lands
+  correctly (a packet capture on first connect will show it either way).
 - No screen-lock or sync-selection handling (multi-client "who owns this screen" bookkeeping that
   WebRCS/Companion implement) — every command is sent unconditionally.
 - Preset-toggle mode, multiviewer memories, and per-shadow-memory recall are not modeled; use
   `SendRawPath` for those.
-- The websocket receive loop assumes an AWJ frame arrives whole within one TCP read; extremely
-  fragmented deliveries (unlikely for AWJ's small delta messages) would need a persistent
-  reassembly buffer — see the comment in `AwjWebSocketClient.ReceiveLoop`.

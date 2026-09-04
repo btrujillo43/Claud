@@ -25,7 +25,7 @@ namespace AnalogWay.Rc400t
             var packet = BuildMagicPacket(macAddress);
             using (var udp = new UDPServer())
             {
-                udp.EnableUDPServer(0);
+                udp.EnableUDPServer();
                 udp.SendData(packet, packet.Length, broadcastAddress, port);
                 udp.DisableUDPServer();
             }

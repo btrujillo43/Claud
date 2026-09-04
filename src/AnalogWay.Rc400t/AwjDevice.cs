@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using Crestron.SimplSharp;
-using Crestron.SimplSharp.CrestronThread;
-using Crestron.SimplSharp.Newtonsoft.Json.Linq;
+using Newtonsoft.Json.Linq;
 
 namespace AnalogWay.Rc400t
 {
@@ -100,10 +100,10 @@ namespace AnalogWay.Rc400t
                 return;
             }
 
-            new Thread(ConnectWorker, null) { Priority = Thread.eThreadPriority.MediumPriority };
+            new Thread(ConnectWorker) { IsBackground = true }.Start();
         }
 
-        private object ConnectWorker(object userSpecific)
+        private void ConnectWorker()
         {
             try
             {
@@ -116,7 +116,7 @@ namespace AnalogWay.Rc400t
                     if (!login.Success)
                     {
                         RaiseError("Login failed: " + login.Error);
-                        return null;
+                        return;
                     }
                     cookie = login.CookieHeader;
                 }
@@ -138,7 +138,6 @@ namespace AnalogWay.Rc400t
             {
                 RaiseError("Connect failed: " + ex.Message);
             }
-            return null;
         }
 
         public void Disconnect()
